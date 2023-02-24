@@ -732,6 +732,7 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "egui",
+ "rand",
  "serde",
  "tracing-subscriber",
  "tracing-wasm",

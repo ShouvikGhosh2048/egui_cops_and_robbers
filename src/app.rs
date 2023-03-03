@@ -348,9 +348,9 @@ fn show_graph_editor(
 
                     // Consider the point p on the edge from vertex i to vertex j,
                     // dividing the segment into the ratio 1 - t : t where 0 <= t <= 1.
-                    // The square of the distance from p to the mouse cursor is a quadratice function.
+                    // The square of the distance from p to the mouse cursor is a quadratic function.
                     // We calculate the t which minimized the square of the distance, calculate the minimum distance
-                    // and then select the edge if the distanc is small enough.
+                    // and then select the edge if the distance is small enough.
                     let a = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
                     let b = 2.0 * ((x1 - x2) * (x2 - x) + (y1 - y2) * (y2 - y));
                     let c = (x2 - x) * (x2 - x) + (y2 - y) * (y2 - y);

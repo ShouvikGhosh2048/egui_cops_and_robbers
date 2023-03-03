@@ -5,39 +5,46 @@ use rand::{
 };
 use std::collections::HashMap;
 
-pub struct Graph<'a> {
-    pub vertices: &'a [(f32, f32)],
-    pub adjacency_list: &'a [&'a [usize]],
+#[derive(Default, Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Graph {
+    pub name: String,
+    pub vertices: Vec<(f32, f32)>,
+    pub adjacency_list: Vec<Vec<usize>>,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, serde::Deserialize, serde::Serialize)]
-pub enum TemplateGraph {
-    Path2,
-    Path5,
-    Hexagon,
+pub fn template_graphs() -> Vec<Graph> {
+    vec![
+        Graph {
+            name: "Path2".to_string(),
+            vertices: vec![(0.5, 0.2), (0.5, 0.8)],
+            adjacency_list: vec![vec![1], vec![0]],
+        },
+        Graph {
+            name: "Path5".to_string(),
+            vertices: vec![(0.5, 0.1), (0.5, 0.3), (0.5, 0.5), (0.5, 0.7), (0.5, 0.9)],
+            adjacency_list: vec![vec![1], vec![0, 2], vec![1, 3], vec![2, 4], vec![3]],
+        },
+        Graph {
+            name: "Hexagon".to_string(),
+            vertices: vec![
+                (0.5, 0.2),
+                (0.76, 0.35),
+                (0.76, 0.65),
+                (0.5, 0.8),
+                (0.24, 0.65),
+                (0.24, 0.35),
+            ],
+            adjacency_list: vec![
+                vec![5, 1],
+                vec![0, 2],
+                vec![1, 3],
+                vec![2, 4],
+                vec![3, 5],
+                vec![4, 0],
+            ],
+        },
+    ]
 }
-
-pub const TEMPLATE_GRAPHS: &[Graph<'static>] = &[
-    Graph {
-        vertices: &[(0.5, 0.2), (0.5, 0.8)],
-        adjacency_list: &[&[1], &[0]],
-    },
-    Graph {
-        vertices: &[(0.5, 0.1), (0.5, 0.3), (0.5, 0.5), (0.5, 0.7), (0.5, 0.9)],
-        adjacency_list: &[&[1], &[0, 2], &[1, 3], &[2, 4], &[3]],
-    },
-    Graph {
-        vertices: &[
-            (0.5, 0.2),
-            (0.76, 0.35),
-            (0.76, 0.65),
-            (0.5, 0.8),
-            (0.24, 0.65),
-            (0.24, 0.35),
-        ],
-        adjacency_list: &[&[5, 1], &[0, 2], &[1, 3], &[2, 4], &[3, 5], &[4, 0]],
-    },
-];
 
 #[derive(Debug, PartialEq, Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub enum Algorithm {
@@ -45,56 +52,43 @@ pub enum Algorithm {
     Menace,
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
-pub struct GameSettings {
-    pub graph: TemplateGraph,
-    pub number_of_cops: u8,
-    pub number_of_steps: u8,
-    pub cop: Algorithm,
-    pub robber: Algorithm,
-}
-
 type CopPositions = Vec<usize>;
 type RobberPosition = usize;
 
 pub trait Cop {
-    fn start(&mut self) -> CopPositions;
+    fn start(&mut self, graph: &Graph) -> CopPositions;
     fn step(
         &mut self,
+        graph: &Graph,
         cop_positions: &CopPositions,
         robber_position: RobberPosition,
     ) -> CopPositions;
-    fn end(&mut self, cop_positions: &CopPositions, robber_position: RobberPosition);
+    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: RobberPosition);
 }
 
 pub trait Robber {
-    fn start(&mut self, cop_positions: &CopPositions) -> RobberPosition;
+    fn start(&mut self, graph: &Graph, cop_positions: &CopPositions) -> RobberPosition;
     fn step(
         &mut self,
+        graph: &Graph,
         cop_positions: &CopPositions,
         robber_position: RobberPosition,
     ) -> RobberPosition;
-    fn end(&mut self, cop_positions: &CopPositions, robber_position: RobberPosition);
+    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: RobberPosition);
 }
 
 struct RandomCop {
-    graph: TemplateGraph,
     number_of_cops: u8,
 }
 
 impl RandomCop {
-    fn new(game_settings: &GameSettings) -> RandomCop {
-        RandomCop {
-            graph: game_settings.graph,
-            number_of_cops: game_settings.number_of_cops,
-        }
+    fn new(number_of_cops: u8) -> RandomCop {
+        RandomCop { number_of_cops }
     }
 }
 
 impl Cop for RandomCop {
-    fn start(&mut self) -> CopPositions {
-        let graph = &TEMPLATE_GRAPHS[self.graph as usize];
-
+    fn start(&mut self, graph: &Graph) -> CopPositions {
         let mut positions = Vec::new();
         let mut rng = rand::thread_rng();
         let options = Uniform::from(0..graph.vertices.len());
@@ -106,15 +100,14 @@ impl Cop for RandomCop {
 
     fn step(
         &mut self,
+        graph: &Graph,
         cop_positions: &CopPositions,
         _robber_position: RobberPosition,
     ) -> CopPositions {
-        let graph = &TEMPLATE_GRAPHS[self.graph as usize];
-
         let mut positions = Vec::new();
         let mut rng = rand::thread_rng();
         for &cop_position in cop_positions {
-            let neighbours = graph.adjacency_list[cop_position];
+            let neighbours = &graph.adjacency_list[cop_position];
             // Since we can stay at our current position, we choose a number from 0 to neighbours.len().
             // If it's neighbours.len() we stay at our position, else we move to the corresponding neighbour.
             let new_position = rng.gen_range(0..=neighbours.len());
@@ -127,37 +120,31 @@ impl Cop for RandomCop {
         positions
     }
 
-    fn end(&mut self, _cop_positions: &CopPositions, _robber_position: usize) {}
+    fn end(&mut self, _graph: &Graph, _cop_positions: &CopPositions, _robber_position: usize) {}
 }
 
-struct RandomRobber {
-    graph: TemplateGraph,
-}
+struct RandomRobber {}
 
 impl RandomRobber {
-    fn new(game_settings: &GameSettings) -> RandomRobber {
-        RandomRobber {
-            graph: game_settings.graph,
-        }
+    fn new() -> RandomRobber {
+        RandomRobber {}
     }
 }
 
 impl Robber for RandomRobber {
-    fn start(&mut self, _cop_positions: &CopPositions) -> RobberPosition {
-        let graph = &TEMPLATE_GRAPHS[self.graph as usize];
+    fn start(&mut self, graph: &Graph, _cop_positions: &CopPositions) -> RobberPosition {
         let mut rng = rand::thread_rng();
         rng.gen_range(0..graph.vertices.len())
     }
 
     fn step(
         &mut self,
+        graph: &Graph,
         _cop_positions: &CopPositions,
         robber_position: RobberPosition,
     ) -> RobberPosition {
-        let graph = &TEMPLATE_GRAPHS[self.graph as usize];
-
         let mut rng = rand::thread_rng();
-        let neighbours = graph.adjacency_list[robber_position];
+        let neighbours = &graph.adjacency_list[robber_position];
         let new_position = rng.gen_range(0..=neighbours.len());
         if new_position == neighbours.len() {
             robber_position
@@ -166,7 +153,13 @@ impl Robber for RandomRobber {
         }
     }
 
-    fn end(&mut self, _cop_positions: &CopPositions, _robber_position: RobberPosition) {}
+    fn end(
+        &mut self,
+        _graph: &Graph,
+        _cop_positions: &CopPositions,
+        _robber_position: RobberPosition,
+    ) {
+    }
 }
 
 // A bag of moves for a given position. Used by the MENACE algorithm.
@@ -206,7 +199,6 @@ impl Bag {
 }
 
 struct MenaceCop {
-    graph: TemplateGraph,
     number_of_cops: u8,
     // We use Option<(CopPositions, RobberPosition)>:
     // None is the key for the bag corresponding to the start state.
@@ -217,10 +209,9 @@ struct MenaceCop {
 }
 
 impl MenaceCop {
-    fn new(game_settings: &GameSettings) -> Self {
+    fn new(number_of_cops: u8) -> Self {
         Self {
-            graph: game_settings.graph,
-            number_of_cops: game_settings.number_of_cops,
+            number_of_cops,
             bags: HashMap::new(),
             moves: Vec::new(),
         }
@@ -228,8 +219,8 @@ impl MenaceCop {
 }
 
 impl Cop for MenaceCop {
-    fn start(&mut self) -> CopPositions {
-        let number_of_vertices = TEMPLATE_GRAPHS[self.graph as usize].vertices.len();
+    fn start(&mut self, graph: &Graph) -> CopPositions {
+        let number_of_vertices = graph.vertices.len();
         let bag_key = None;
         let bag = self
             .bags
@@ -249,10 +240,10 @@ impl Cop for MenaceCop {
 
     fn step(
         &mut self,
+        graph: &Graph,
         cop_positions: &CopPositions,
         robber_position: RobberPosition,
     ) -> CopPositions {
-        let graph = &TEMPLATE_GRAPHS[self.graph as usize];
         let bag_key = Some((cop_positions.clone(), robber_position));
         let bag = self.bags.entry(bag_key.clone()).or_insert_with(|| {
             let mut size = 1;
@@ -267,7 +258,7 @@ impl Cop for MenaceCop {
 
         let mut position = vec![];
         for &cop_position in cop_positions {
-            let neighbours = graph.adjacency_list[cop_position];
+            let neighbours = &graph.adjacency_list[cop_position];
             let new_cop_position = choice % (neighbours.len() + 1);
             if new_cop_position == neighbours.len() {
                 position.push(cop_position);
@@ -279,7 +270,12 @@ impl Cop for MenaceCop {
         position
     }
 
-    fn end(&mut self, cop_positions: &CopPositions, robber_position: RobberPosition) {
+    fn end(
+        &mut self,
+        _graph: &Graph,
+        cop_positions: &CopPositions,
+        robber_position: RobberPosition,
+    ) {
         let won = cop_positions.contains(&robber_position);
         for (position, choice) in self.moves.iter() {
             // We should've added a corresponding bag if the position is in self.moves, so we can unwrap.
@@ -295,7 +291,6 @@ impl Cop for MenaceCop {
 }
 
 struct MenaceRobber {
-    graph: TemplateGraph,
     // We use (CopPositions, Option<RobberPosition>):
     // (cop_positions, None) is the key for the bag corresponding to the start states.
     // (cop_positions, Some(robber_position)) corresponds to the non start states.
@@ -305,9 +300,8 @@ struct MenaceRobber {
 }
 
 impl MenaceRobber {
-    fn new(game_settings: &GameSettings) -> Self {
+    fn new() -> Self {
         Self {
-            graph: game_settings.graph,
             bags: HashMap::new(),
             moves: Vec::new(),
         }
@@ -315,10 +309,10 @@ impl MenaceRobber {
 }
 
 impl Robber for MenaceRobber {
-    fn start(&mut self, cop_positions: &CopPositions) -> RobberPosition {
+    fn start(&mut self, graph: &Graph, cop_positions: &CopPositions) -> RobberPosition {
         let bag_key = (cop_positions.clone(), None);
         let bag = self.bags.entry(bag_key.clone()).or_insert_with(|| {
-            let number_of_vertices = TEMPLATE_GRAPHS[self.graph as usize].vertices.len();
+            let number_of_vertices = graph.vertices.len();
             Bag::new(number_of_vertices)
         });
 
@@ -329,10 +323,11 @@ impl Robber for MenaceRobber {
 
     fn step(
         &mut self,
+        graph: &Graph,
         cop_positions: &CopPositions,
         robber_position: RobberPosition,
     ) -> RobberPosition {
-        let neighbours = TEMPLATE_GRAPHS[self.graph as usize].adjacency_list[robber_position];
+        let neighbours = &graph.adjacency_list[robber_position];
         let bag_key = (cop_positions.clone(), Some(robber_position));
         let bag = self
             .bags
@@ -348,7 +343,12 @@ impl Robber for MenaceRobber {
         }
     }
 
-    fn end(&mut self, cop_positions: &CopPositions, robber_position: RobberPosition) {
+    fn end(
+        &mut self,
+        _graph: &Graph,
+        cop_positions: &CopPositions,
+        robber_position: RobberPosition,
+    ) {
         let won = !cop_positions.contains(&robber_position);
         for (position, choice) in self.moves.iter() {
             let bag = self.bags.get_mut(position).unwrap();
@@ -370,6 +370,7 @@ pub enum Turn {
 }
 
 pub struct Game {
+    pub graph: Graph,
     pub number_of_steps: u8,
     pub cop: Box<dyn Cop + Send>,
     pub robber: Box<dyn Robber + Send>,
@@ -381,23 +382,30 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(game_settings: &GameSettings) -> Game {
-        let cop: Box<dyn Cop + Send> = match game_settings.cop {
-            Algorithm::Random => Box::new(RandomCop::new(game_settings)),
-            Algorithm::Menace => Box::new(MenaceCop::new(game_settings)),
+    pub fn new(
+        graph: &Graph,
+        number_of_cops: u8,
+        number_of_steps: u8,
+        cop: Algorithm,
+        robber: Algorithm,
+    ) -> Game {
+        let cop: Box<dyn Cop + Send> = match cop {
+            Algorithm::Random => Box::new(RandomCop::new(number_of_cops)),
+            Algorithm::Menace => Box::new(MenaceCop::new(number_of_cops)),
         };
-        let robber: Box<dyn Robber + Send> = match game_settings.robber {
-            Algorithm::Random => Box::new(RandomRobber::new(game_settings)),
-            Algorithm::Menace => Box::new(MenaceRobber::new(game_settings)),
+        let robber: Box<dyn Robber + Send> = match robber {
+            Algorithm::Random => Box::new(RandomRobber::new()),
+            Algorithm::Menace => Box::new(MenaceRobber::new()),
         };
         Game {
-            number_of_steps: game_settings.number_of_steps,
+            graph: graph.clone(),
+            number_of_steps,
             cop,
             robber,
             score: [0, 0],
             cop_positions: None,
             robber_position: None,
-            steps_left: game_settings.number_of_steps,
+            steps_left: number_of_steps,
             turn: Turn::Cop,
         }
     }
@@ -407,11 +415,14 @@ impl Game {
             Turn::Cop => {
                 if let Some(cop_positions) = &self.cop_positions {
                     let robber_position = self.robber_position.unwrap(); // Robber position will exist as we have cop_positions and it's a cop turn.
-                    let new_cop_positions = self.cop.step(cop_positions, robber_position);
+                    let new_cop_positions =
+                        self.cop.step(&self.graph, cop_positions, robber_position);
                     if new_cop_positions.contains(&robber_position) {
                         // Cop won
-                        self.cop.end(&new_cop_positions, robber_position);
-                        self.robber.end(&new_cop_positions, robber_position);
+                        self.cop
+                            .end(&self.graph, &new_cop_positions, robber_position);
+                        self.robber
+                            .end(&self.graph, &new_cop_positions, robber_position);
                         self.score[0] += 1;
                         self.turn = Turn::Over;
                     } else {
@@ -419,7 +430,7 @@ impl Game {
                     }
                     self.cop_positions = Some(new_cop_positions);
                 } else {
-                    self.cop_positions = Some(self.cop.start());
+                    self.cop_positions = Some(self.cop.start(&self.graph));
                     self.turn = Turn::Robber;
                 }
             }
@@ -428,22 +439,27 @@ impl Game {
 
                 let new_robber_position = if let Some(robber_position) = self.robber_position {
                     self.steps_left -= 1; // Decrease by one as robber made their move.
-                    self.robber.step(cop_positions, robber_position)
+                    self.robber
+                        .step(&self.graph, cop_positions, robber_position)
                 } else {
                     // We don't decrease by one as the robber just chooses their starting position.
-                    self.robber.start(cop_positions)
+                    self.robber.start(&self.graph, cop_positions)
                 };
 
                 if cop_positions.contains(&new_robber_position) {
                     // Cop won
-                    self.cop.end(cop_positions, new_robber_position);
-                    self.robber.end(cop_positions, new_robber_position);
+                    self.cop
+                        .end(&self.graph, cop_positions, new_robber_position);
+                    self.robber
+                        .end(&self.graph, cop_positions, new_robber_position);
                     self.score[0] += 1;
                     self.turn = Turn::Over;
                 } else if self.steps_left == 0 {
                     // Robber won
-                    self.cop.end(cop_positions, new_robber_position);
-                    self.robber.end(cop_positions, new_robber_position);
+                    self.cop
+                        .end(&self.graph, cop_positions, new_robber_position);
+                    self.robber
+                        .end(&self.graph, cop_positions, new_robber_position);
                     self.score[1] += 1;
                     self.turn = Turn::Over;
                 } else {

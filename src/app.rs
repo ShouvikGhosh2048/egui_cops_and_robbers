@@ -267,7 +267,7 @@ fn show_graph_editor(
         mode,
     } = graph_creation_state;
 
-    let (response, painter) = ui.allocate_painter(Vec2::new(SIZE, SIZE), Sense::click());
+    let (mut response, painter) = ui.allocate_painter(Vec2::new(SIZE, SIZE), Sense::click());
 
     let to_screen = egui::emath::RectTransform::from_to(
         Rect::from_min_size(Pos2::ZERO, Vec2::new(1.0, 1.0)),
@@ -300,6 +300,8 @@ fn show_graph_editor(
                     Stroke::new(1.0, Color32::BLACK),
                 ));
             }
+
+            response.mark_changed();
         } else if vertex_response.drag_released() && *mode == Mode::Edge {
             if let Some(mouse_pos) = vertex_response.interact_pointer_pos() {
                 for j in 0..vertices.len() {
@@ -317,11 +319,14 @@ fn show_graph_editor(
                         } else {
                             SelectedItem::Edge(j, i)
                         };
+
+                        response.mark_changed();
                     }
                 }
             }
         } else if vertex_response.clicked_elsewhere() && *selected_item == SelectedItem::Vertex(i) {
             *selected_item = SelectedItem::None;
+            response.mark_changed();
         }
     }
 
@@ -331,6 +336,8 @@ fn show_graph_editor(
             *selected_item = SelectedItem::Vertex(vertices.len());
             vertices.push(to_screen.inverse().transform_pos(pos).into());
             adjacency_list.push(vec![]);
+
+            response.mark_changed();
         }
     }
 
@@ -359,6 +366,8 @@ fn show_graph_editor(
                     if distance < 5.0 {
                         selected_anything = true;
                         *selected_item = SelectedItem::Edge(i, j);
+
+                        response.mark_changed();
                     }
                 }
             }
@@ -367,6 +376,7 @@ fn show_graph_editor(
 
     if response.clicked() && !selected_anything {
         *selected_item = SelectedItem::None;
+        response.mark_changed();
     }
 
     // Create the shapes

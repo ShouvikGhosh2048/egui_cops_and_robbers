@@ -55,29 +55,7 @@ pub enum Algorithm {
 type CopPositions = Vec<usize>;
 type RobberPosition = usize;
 
-pub trait Cop {
-    fn start(&mut self, graph: &Graph) -> CopPositions;
-    fn step(
-        &mut self,
-        graph: &Graph,
-        cop_positions: &CopPositions,
-        robber_position: RobberPosition,
-    ) -> CopPositions;
-    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: RobberPosition);
-}
-
-pub trait Robber {
-    fn start(&mut self, graph: &Graph, cop_positions: &CopPositions) -> RobberPosition;
-    fn step(
-        &mut self,
-        graph: &Graph,
-        cop_positions: &CopPositions,
-        robber_position: RobberPosition,
-    ) -> RobberPosition;
-    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: RobberPosition);
-}
-
-struct RandomCop {
+pub struct RandomCop {
     number_of_cops: u8,
 }
 
@@ -85,9 +63,7 @@ impl RandomCop {
     fn new(number_of_cops: u8) -> RandomCop {
         RandomCop { number_of_cops }
     }
-}
 
-impl Cop for RandomCop {
     fn start(&mut self, graph: &Graph) -> CopPositions {
         let mut positions = Vec::new();
         let mut rng = rand::thread_rng();
@@ -123,15 +99,13 @@ impl Cop for RandomCop {
     fn end(&mut self, _graph: &Graph, _cop_positions: &CopPositions, _robber_position: usize) {}
 }
 
-struct RandomRobber {}
+pub struct RandomRobber {}
 
 impl RandomRobber {
     fn new() -> RandomRobber {
         RandomRobber {}
     }
-}
 
-impl Robber for RandomRobber {
     fn start(&mut self, graph: &Graph, _cop_positions: &CopPositions) -> RobberPosition {
         let mut rng = rand::thread_rng();
         rng.gen_range(0..graph.vertices.len())
@@ -163,8 +137,8 @@ impl Robber for RandomRobber {
 }
 
 // A bag of moves for a given position. Used by the MENACE algorithm.
-struct Bag {
-    counts: Vec<u32>,
+pub struct Bag {
+    pub counts: Vec<u32>,
 }
 
 impl Bag {
@@ -198,12 +172,12 @@ impl Bag {
     }
 }
 
-struct MenaceCop {
+pub struct MenaceCop {
     number_of_cops: u8,
     // We use Option<(CopPositions, RobberPosition)>:
     // None is the key for the bag corresponding to the start state.
     // Some((cop_positions, robber_position)) corresponds to the non start states.
-    bags: HashMap<Option<(CopPositions, RobberPosition)>, Bag>,
+    pub bags: HashMap<Option<(CopPositions, RobberPosition)>, Bag>,
     // We keep track of the moves to increase/decrease.
     moves: Vec<(Option<(CopPositions, RobberPosition)>, usize)>,
 }
@@ -216,9 +190,7 @@ impl MenaceCop {
             moves: Vec::new(),
         }
     }
-}
 
-impl Cop for MenaceCop {
     fn start(&mut self, graph: &Graph) -> CopPositions {
         let number_of_vertices = graph.vertices.len();
         let bag_key = None;
@@ -290,11 +262,11 @@ impl Cop for MenaceCop {
     }
 }
 
-struct MenaceRobber {
+pub struct MenaceRobber {
     // We use (CopPositions, Option<RobberPosition>):
     // (cop_positions, None) is the key for the bag corresponding to the start states.
     // (cop_positions, Some(robber_position)) corresponds to the non start states.
-    bags: HashMap<(CopPositions, Option<RobberPosition>), Bag>,
+    pub bags: HashMap<(CopPositions, Option<RobberPosition>), Bag>,
     // We keep track of the moves to increase/decrease.
     moves: Vec<((CopPositions, Option<RobberPosition>), usize)>,
 }
@@ -306,9 +278,7 @@ impl MenaceRobber {
             moves: Vec::new(),
         }
     }
-}
 
-impl Robber for MenaceRobber {
     fn start(&mut self, graph: &Graph, cop_positions: &CopPositions) -> RobberPosition {
         let bag_key = (cop_positions.clone(), None);
         let bag = self.bags.entry(bag_key.clone()).or_insert_with(|| {
@@ -369,11 +339,77 @@ pub enum Turn {
     Over,
 }
 
+pub enum Cop {
+    Random(RandomCop),
+    Menace(MenaceCop),
+}
+
+impl Cop {
+    fn start(&mut self, graph: &Graph) -> CopPositions {
+        match self {
+            Cop::Random(cop) => cop.start(graph),
+            Cop::Menace(cop) => cop.start(graph),
+        }
+    }
+
+    fn step(
+        &mut self,
+        graph: &Graph,
+        cop_positions: &CopPositions,
+        robber_position: RobberPosition,
+    ) -> CopPositions {
+        match self {
+            Cop::Random(cop) => cop.step(graph, cop_positions, robber_position),
+            Cop::Menace(cop) => cop.step(graph, cop_positions, robber_position),
+        }
+    }
+
+    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: usize) {
+        match self {
+            Cop::Random(cop) => cop.end(graph, cop_positions, robber_position),
+            Cop::Menace(cop) => cop.end(graph, cop_positions, robber_position),
+        }
+    }
+}
+
+pub enum Robber {
+    Random(RandomRobber),
+    Menace(MenaceRobber),
+}
+
+impl Robber {
+    fn start(&mut self, graph: &Graph, cop_positions: &CopPositions) -> RobberPosition {
+        match self {
+            Robber::Random(robber) => robber.start(graph, cop_positions),
+            Robber::Menace(robber) => robber.start(graph, cop_positions),
+        }
+    }
+
+    fn step(
+        &mut self,
+        graph: &Graph,
+        cop_positions: &CopPositions,
+        robber_position: RobberPosition,
+    ) -> RobberPosition {
+        match self {
+            Robber::Random(robber) => robber.step(graph, cop_positions, robber_position),
+            Robber::Menace(robber) => robber.step(graph, cop_positions, robber_position),
+        }
+    }
+
+    fn end(&mut self, graph: &Graph, cop_positions: &CopPositions, robber_position: usize) {
+        match self {
+            Robber::Random(robber) => robber.end(graph, cop_positions, robber_position),
+            Robber::Menace(robber) => robber.end(graph, cop_positions, robber_position),
+        }
+    }
+}
+
 pub struct Game {
     pub graph: Graph,
     pub number_of_steps: u8,
-    pub cop: Box<dyn Cop + Send>,
-    pub robber: Box<dyn Robber + Send>,
+    pub cop: Cop,
+    pub robber: Robber,
     pub score: [u32; 2],
     pub cop_positions: Option<CopPositions>,
     pub robber_position: Option<RobberPosition>,
@@ -389,13 +425,13 @@ impl Game {
         cop: Algorithm,
         robber: Algorithm,
     ) -> Game {
-        let cop: Box<dyn Cop + Send> = match cop {
-            Algorithm::Random => Box::new(RandomCop::new(number_of_cops)),
-            Algorithm::Menace => Box::new(MenaceCop::new(number_of_cops)),
+        let cop = match cop {
+            Algorithm::Random => Cop::Random(RandomCop::new(number_of_cops)),
+            Algorithm::Menace => Cop::Menace(MenaceCop::new(number_of_cops)),
         };
-        let robber: Box<dyn Robber + Send> = match robber {
-            Algorithm::Random => Box::new(RandomRobber::new()),
-            Algorithm::Menace => Box::new(MenaceRobber::new()),
+        let robber = match robber {
+            Algorithm::Random => Robber::Random(RandomRobber::new()),
+            Algorithm::Menace => Robber::Menace(MenaceRobber::new()),
         };
         Game {
             graph: graph.clone(),

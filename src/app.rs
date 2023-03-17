@@ -12,6 +12,10 @@ use std::{
     time::Duration,
 };
 
+const ANIMATION_TIME: f32 = 0.5;
+const COP_COLOR: Color32 = Color32::from_rgb(230, 30, 10);
+const ROBBER_COLOR: Color32 = Color32::from_rgb(0, 100, 225);
+
 #[derive(PartialEq)]
 enum MenaceEditingVertex {
     None,
@@ -196,7 +200,7 @@ impl GameHandle {
             }
 
             ctx.request_repaint();
-            thread::sleep(Duration::from_millis(1000));
+            thread::sleep(Duration::from_secs_f32(2.0 * ANIMATION_TIME));
         });
         GameHandle {
             game_view_state: game_and_animation_state_clone,
@@ -505,10 +509,13 @@ fn show_graph_editor(
 }
 
 fn show_game(ui: &mut egui::Ui, graph: &Graph, game_state: &mut GameViewState) -> egui::Response {
-    ui.label(format!(
-        "{} - {}",
-        game_state.game.score[0], game_state.game.score[1],
-    ));
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Score (Cop-Robber):").strong());
+        ui.label(format!(
+            "{} - {}",
+            game_state.game.score[0], game_state.game.score[1],
+        ));
+    });
 
     let size = egui::vec2(300.0, 300.0);
     let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -522,7 +529,7 @@ fn show_game(ui: &mut egui::Ui, graph: &Graph, game_state: &mut GameViewState) -
     if ui.is_rect_visible(rect) {
         let mut animation_distance =
             ui.ctx()
-                .animate_bool_with_time(response.id, game_state.animation_bool, 0.5);
+                .animate_bool_with_time(response.id, game_state.animation_bool, ANIMATION_TIME);
         if !game_state.animation_bool {
             animation_distance = 1.0 - animation_distance;
         }
@@ -566,7 +573,7 @@ fn show_game(ui: &mut egui::Ui, graph: &Graph, game_state: &mut GameViewState) -
                 center = rect.lerp(graph.vertices[robber_position].into());
             }
             ui.painter()
-                .circle(center, 5.0, egui::Color32::BLUE, egui::Stroke::NONE);
+                .circle(center, 6.0, ROBBER_COLOR, egui::Stroke::NONE);
         }
 
         if let Some(cop_positions) = &game_state.game.cop_positions {
@@ -581,14 +588,14 @@ fn show_game(ui: &mut egui::Ui, graph: &Graph, game_state: &mut GameViewState) -
                             + current_position * animation_distance,
                     );
                     ui.painter()
-                        .circle(center, 5.0, egui::Color32::RED, egui::Stroke::NONE);
+                        .circle(center, 5.0, COP_COLOR, egui::Stroke::NONE);
                 }
             } else {
                 for &cop_position in cop_positions {
                     ui.painter().circle(
                         rect.lerp(graph.vertices[cop_position].into()),
                         5.0,
-                        egui::Color32::RED,
+                        COP_COLOR,
                         egui::Stroke::NONE,
                     );
                 }
@@ -651,13 +658,13 @@ fn select_graph_vertex(
         }
 
         let vertex = graph.vertices[*vertex];
-        let color = if is_cop {
-            egui::Color32::RED
+        let (radius, color) = if is_cop {
+            (5.0, COP_COLOR)
         } else {
-            egui::Color32::BLUE
+            (6.0, ROBBER_COLOR)
         };
         ui.painter()
-            .circle(rect.lerp(vertex.into()), 5.0, color, egui::Stroke::NONE);
+            .circle(rect.lerp(vertex.into()), radius, color, egui::Stroke::NONE);
     }
 
     response
@@ -670,7 +677,7 @@ fn show_graph_with_cops_and_robber(
     graph: &Graph,
     size: f32,
 ) -> egui::Response {
-    let vertex_size = size / 60.0;
+    let cop_size = size / 60.0;
     let graph_size = egui::vec2(size, size);
     let (rect, response) = ui.allocate_exact_size(graph_size, egui::Sense::hover());
 
@@ -695,7 +702,7 @@ fn show_graph_with_cops_and_robber(
         for vertex in graph.vertices.iter() {
             ui.painter().circle(
                 rect.lerp(vertex.into()),
-                vertex_size,
+                cop_size,
                 visuals.fg_stroke.color,
                 visuals.fg_stroke,
             );
@@ -705,8 +712,8 @@ fn show_graph_with_cops_and_robber(
             let robber_vertex = graph.vertices[robber];
             ui.painter().circle(
                 rect.lerp(robber_vertex.into()),
-                vertex_size,
-                egui::Color32::BLUE,
+                1.2 * cop_size,
+                ROBBER_COLOR,
                 egui::Stroke::NONE,
             );
         }
@@ -716,8 +723,8 @@ fn show_graph_with_cops_and_robber(
                 let vertex = graph.vertices[vertex];
                 ui.painter().circle(
                     rect.lerp(vertex.into()),
-                    vertex_size,
-                    egui::Color32::RED,
+                    cop_size,
+                    COP_COLOR,
                     egui::Stroke::NONE,
                 );
             }
@@ -836,6 +843,18 @@ impl eframe::App for TemplateApp {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("Cops and Robbers");
 
+                    ui.add_space(5.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Graph name");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut graph_creation_state.graph.name)
+                                .desired_width(100.0),
+                        );
+                    });
+
+                    ui.add_space(5.0);
+
                     ui.horizontal(|ui| {
                         ui.selectable_value(
                             &mut graph_creation_state.mode,
@@ -904,11 +923,6 @@ impl eframe::App for TemplateApp {
 
                     Frame::canvas(ui.style()).show(ui, |ui| {
                         show_graph_editor(ui, graph_creation_state);
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Graph name");
-                        ui.text_edit_singleline(&mut graph_creation_state.graph.name);
                     });
 
                     ui.horizontal(|ui| {
@@ -1555,18 +1569,20 @@ impl eframe::App for TemplateApp {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("Cops and Robbers");
 
-                    if ui.button("Create new game").clicked() {
-                        new_view = Some(View::GameSettingsSelection);
-                        return;
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Create new game").clicked() {
+                            new_view = Some(View::GameSettingsSelection);
+                            return;
+                        }
 
-                    if ui.button("Play 1000 games").clicked() {
-                        let mut number_of_immediate_games = number_of_immediate_games.lock();
-                        *number_of_immediate_games = match *number_of_immediate_games {
-                            Some(games) => Some(games + 1000),
-                            None => Some(1000),
-                        };
-                    }
+                        if ui.button("Play 1000 games").clicked() {
+                            let mut number_of_immediate_games = number_of_immediate_games.lock();
+                            *number_of_immediate_games = match *number_of_immediate_games {
+                                Some(games) => Some(games + 1000),
+                                None => Some(1000),
+                            };
+                        }
+                    });
 
                     let number_of_immediate_games = number_of_immediate_games.lock();
                     if number_of_immediate_games.is_some() {

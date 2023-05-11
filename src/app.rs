@@ -734,6 +734,863 @@ fn show_graph_with_cops_and_robber(
     response
 }
 
+fn game_settings_selection(
+    ctx: &egui::Context,
+    graphs: &Vec<Graph>,
+    current_graph: &mut usize,
+    number_of_cops: &mut u8,
+    number_of_steps: &mut u8,
+    cop: &mut Algorithm,
+    robber: &mut Algorithm,
+) -> Option<View> {
+    let mut view = None;
+
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.heading("Cops and Robbers");
+
+        ui.horizontal(|ui| {
+            ui.label("Graph");
+            egui::ComboBox::from_id_source("Graph")
+                .selected_text(graphs[*current_graph].name.clone())
+                .show_ui(ui, |ui| {
+                    for (i, graph) in graphs.iter().enumerate() {
+                        ui.selectable_value(current_graph, i, graph.name.clone());
+                    }
+                });
+            if ui.button("New graph").clicked() {
+                view = Some(View::GraphCreation(GraphCreationState::default()));
+            }
+        });
+        show_graph(ui, &graphs[*current_graph]);
+
+        ui.horizontal(|ui| {
+            ui.label("Number of cops");
+            egui::ComboBox::from_id_source("Number of cops")
+                .selected_text(format!("{number_of_cops}"))
+                .show_ui(ui, |ui| {
+                    for i in 1..=3 {
+                        ui.selectable_value(number_of_cops, i, i.to_string());
+                    }
+                });
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Number of steps");
+            ui.add(egui::DragValue::new(number_of_steps).clamp_range(0..=100));
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Cop algorithm");
+            egui::ComboBox::from_id_source("Cop algorithm")
+                .selected_text(format!("{cop:?}"))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(cop, Algorithm::Random, "Random");
+                    ui.selectable_value(cop, Algorithm::Menace, "Menace");
+                });
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Robber algorithm");
+            egui::ComboBox::from_id_source("Robber algorithm")
+                .selected_text(format!("{robber:?}"))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(robber, Algorithm::Random, "Random");
+                    ui.selectable_value(robber, Algorithm::Menace, "Menace");
+                });
+        });
+
+        if ui.button("Play").clicked() {
+            view = Some(View::Game(GameHandle::new(
+                &graphs[*current_graph],
+                *number_of_cops,
+                *number_of_steps,
+                *cop,
+                *robber,
+                ctx.clone(),
+            )));
+        }
+    });
+
+    view
+}
+
+fn graph_creation(
+    ctx: &egui::Context,
+    graph_creation_state: &mut GraphCreationState,
+    graphs: &mut Vec<Graph>,
+    current_graph: &mut usize,
+) -> Option<View> {
+    let mut view = None;
+
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.heading("Cops and Robbers");
+
+        ui.add_space(5.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Graph name");
+            ui.add(
+                egui::TextEdit::singleline(&mut graph_creation_state.graph.name)
+                    .desired_width(100.0),
+            );
+        });
+
+        ui.add_space(5.0);
+
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut graph_creation_state.mode, Mode::Vertex, "Vertex mode");
+            ui.selectable_value(&mut graph_creation_state.mode, Mode::Edge, "Edge mode");
+            if ui.button("Delete").clicked() {
+                match graph_creation_state.selected_item {
+                    SelectedItem::Vertex(i) => {
+                        graph_creation_state.graph.vertices.remove(i);
+                        graph_creation_state.graph.adjacency_list.remove(i);
+
+                        // We will go through the adjaceny list.
+                        // We will remove all occurences of i and relabel any vertex v greater than i as v - 1.
+                        graph_creation_state
+                            .graph
+                            .adjacency_list
+                            .iter_mut()
+                            .for_each(|list| {
+                                let mut removed_vertex_position = None;
+                                for (index, v) in list.iter_mut().enumerate() {
+                                    match (*v).cmp(&i) {
+                                        Ordering::Greater => *v -= 1,
+                                        Ordering::Equal => removed_vertex_position = Some(index),
+                                        Ordering::Less => {}
+                                    }
+                                }
+                                if let Some(index) = removed_vertex_position {
+                                    list.remove(index);
+                                }
+                            });
+                        graph_creation_state.selected_item = SelectedItem::None;
+                    }
+                    SelectedItem::Edge(i, j) => {
+                        let adjaceny_list_i = &mut graph_creation_state.graph.adjacency_list[i];
+                        for k in 0..adjaceny_list_i.len() {
+                            if adjaceny_list_i[k] == j {
+                                adjaceny_list_i.remove(k);
+                                break;
+                            }
+                        }
+
+                        let adjaceny_list_j = &mut graph_creation_state.graph.adjacency_list[j];
+                        for k in 0..adjaceny_list_j.len() {
+                            if adjaceny_list_j[k] == i {
+                                adjaceny_list_j.remove(k);
+                                break;
+                            }
+                        }
+
+                        graph_creation_state.selected_item = SelectedItem::None;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        Frame::canvas(ui.style()).show(ui, |ui| {
+            show_graph_editor(ui, graph_creation_state);
+        });
+
+        ui.horizontal(|ui| {
+            if ui.button("Create").clicked() {
+                if graph_creation_state.graph.name.is_empty()
+                    || graph_creation_state.graph.vertices.is_empty()
+                {
+                    return;
+                }
+                graphs.push(graph_creation_state.graph.clone());
+                *current_graph = graphs.len() - 1;
+                view = Some(View::GameSettingsSelection);
+            }
+            if ui.button("Cancel").clicked() {
+                view = Some(View::GameSettingsSelection);
+            }
+        });
+    });
+
+    view
+}
+
+fn game_details(
+    ctx: &egui::Context,
+    game_and_animation_state: &mut Arc<Mutex<Option<GameViewState>>>,
+    number_of_immediate_games: &mut Arc<Mutex<Option<u32>>>,
+    number_of_cops: u8,
+) {
+    egui::SidePanel::right("Details")
+        .exact_width(350.0)
+        .resizable(false)
+        .show(ctx, |ui| {
+            egui::ScrollArea::both().auto_shrink([false, true]).show(ui, |ui| {
+                let number_of_immediate_games = number_of_immediate_games.lock();
+
+                // Check if their are games to be computed
+                // - if so, we shouldn't get the game_and_animation_state lock right now,
+                // as the computation thread may be locking it.
+                if number_of_immediate_games.is_some() {
+                    ui.spinner();
+                    return;
+                }
+
+                let mut game_and_animation_state = game_and_animation_state.lock();
+                if let Some(game_and_animation_state) = &mut (*game_and_animation_state)
+                {
+                    let GameViewState {
+                        game,
+                        game_statistics_view,
+                        menace_cop_viewing_state,
+                        menace_robber_viewing_state,
+                        cop_scores,
+                        ..
+                    } = game_and_animation_state;
+
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(game_statistics_view, GameStatisticsView::Cop, "Cop");
+                        ui.selectable_value(game_statistics_view, GameStatisticsView::Robber, "Robber");
+                        ui.selectable_value(game_statistics_view, GameStatisticsView::Graph, "Graph");
+                    });
+
+                    match game_statistics_view {
+                        GameStatisticsView::Cop => {
+                            match &mut game.cop {
+                                Cop::Random(_) => {
+                                    ui.label(RichText::new("Random cop").strong());
+                                }
+                                Cop::Menace(cop) => {
+                                    let MenaceCopViewingState {
+                                        bag_key,
+                                        editing_vertex,
+                                        sort_by_counts,
+                                    } = menace_cop_viewing_state.as_mut().unwrap();
+
+                                    ui.label(RichText::new("Menace cop").strong());
+
+                                    ui.add_space(10.0);
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Bag:").strong());
+
+                                        // start_bag is a temporary bool we can change,
+                                        // we use it to change whether we're currently viewing
+                                        // the start bag or a non start bag.
+                                        let mut start_bag = bag_key.is_none();
+                                        let selected_text =
+                                            if start_bag { "Start" } else { "Non start" };
+                                        egui::ComboBox::from_id_source("Cop bag type")
+                                            .selected_text(selected_text)
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut start_bag, true, "Start");
+                                                ui.selectable_value(
+                                                    &mut start_bag,
+                                                    false,
+                                                    "Non start",
+                                                );
+                                            });
+                                        // if start_bag changes, we update menace_cop_viewing_bag
+                                        if start_bag {
+                                            if bag_key.is_some() {
+                                                *bag_key = None;
+                                            }
+                                        } else if bag_key.is_none() {
+                                            *bag_key = Some((vec![0; number_of_cops as usize], 0));
+                                        }
+                                    });
+
+                                    // If we are viewing a non-start bag, we allow the user to select the bag.
+                                    if let Some((cops, robber)) = bag_key {
+                                        ui.horizontal(|ui| {
+                                            ui.selectable_value(
+                                                editing_vertex,
+                                                MenaceEditingVertex::None,
+                                                "View",
+                                            );
+                                            for i in 0..cops.len() {
+                                                ui.selectable_value(
+                                                    editing_vertex,
+                                                    MenaceEditingVertex::Cop(i),
+                                                    format!("Edit cop {i}"),
+                                                );
+                                            }
+                                            ui.selectable_value(
+                                                editing_vertex,
+                                                MenaceEditingVertex::Robber,
+                                                "Edit robber",
+                                            );
+                                        });
+
+                                        match editing_vertex {
+                                            MenaceEditingVertex::None => {
+                                                show_graph_with_cops_and_robber(
+                                                    ui,
+                                                    Some(cops),
+                                                    Some(*robber),
+                                                    &game.graph,
+                                                    300.0,
+                                                );
+                                            }
+                                            MenaceEditingVertex::Cop(i) => {
+                                                select_graph_vertex(
+                                                    ui,
+                                                    &mut cops[*i],
+                                                    &game.graph,
+                                                    true,
+                                                );
+                                            }
+                                            MenaceEditingVertex::Robber => {
+                                                select_graph_vertex(
+                                                    ui,
+                                                    robber,
+                                                    &game.graph,
+                                                    false,
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    ui.add_space(10.0);
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Moves:").strong());
+                                        ui.toggle_value(sort_by_counts, "Sort moves");
+                                    });
+
+                                    let bag = cop.bags.get(bag_key);
+                                    if let Some((cops, robber)) = bag_key {
+                                        // Non start position
+                                        match bag {
+                                            None => {
+                                                let mut choices = 1;
+                                                for cop in cops.iter() {
+                                                    choices *= game.graph.adjacency_list[*cop]
+                                                        .len()
+                                                        + 1;
+                                                }
+                                                for mut choice in 0..choices {
+                                                    let mut position = vec![];
+                                                    for &cop in cops.iter() {
+                                                        let neighbours =
+                                                            &game.graph.adjacency_list[cop];
+                                                        let new_cop_position =
+                                                            choice % (neighbours.len() + 1);
+                                                        if new_cop_position == neighbours.len()
+                                                        {
+                                                            position.push(cop);
+                                                        } else {
+                                                            position.push(
+                                                                neighbours[new_cop_position],
+                                                            );
+                                                        }
+                                                        choice /= neighbours.len() + 1;
+                                                    }
+                                                    ui.horizontal(|ui| {
+                                                        show_graph_with_cops_and_robber(
+                                                            ui,
+                                                            Some(&position),
+                                                            Some(*robber),
+                                                            &game.graph,
+                                                            180.0,
+                                                        );
+                                                        ui.label("50");
+                                                    });
+                                                }
+                                            }
+                                            Some(bag) => {
+                                                let positions_and_counts = bag
+                                                    .counts
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(mut choice, count)| {
+                                                        let mut position = vec![];
+                                                        for &cop in cops.iter() {
+                                                            let neighbours =
+                                                                &game.graph.adjacency_list[cop];
+                                                            let new_cop_position =
+                                                                choice % (neighbours.len() + 1);
+                                                            if new_cop_position
+                                                                == neighbours.len()
+                                                            {
+                                                                position.push(cop);
+                                                            } else {
+                                                                position.push(
+                                                                    neighbours
+                                                                        [new_cop_position],
+                                                                );
+                                                            }
+                                                            choice /= neighbours.len() + 1;
+                                                        }
+                                                        (position, count)
+                                                    });
+                                                if *sort_by_counts {
+                                                    let mut positions_and_counts =
+                                                        positions_and_counts
+                                                            .collect::<Vec<_>>();
+                                                    positions_and_counts
+                                                        .sort_by_key(|(_, count)| **count);
+                                                    for (position, count) in
+                                                        positions_and_counts.iter().rev()
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(position),
+                                                                Some(*robber),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                } else {
+                                                    for (position, count) in
+                                                        positions_and_counts
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(&position),
+                                                                Some(*robber),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        match bag {
+                                            None => {
+                                                let choices = game
+                                                    .graph
+                                                    .vertices
+                                                    .len()
+                                                    .pow(number_of_cops as u32);
+                                                for mut choice in 0..choices {
+                                                    let mut position = vec![];
+                                                    for _ in 0..number_of_cops {
+                                                        position.push(
+                                                            choice % game.graph.vertices.len(),
+                                                        );
+                                                        choice /= game.graph.vertices.len();
+                                                    }
+                                                    ui.horizontal(|ui| {
+                                                        show_graph_with_cops_and_robber(
+                                                            ui,
+                                                            Some(&position),
+                                                            None,
+                                                            &game.graph,
+                                                            180.0,
+                                                        );
+                                                        ui.label("50");
+                                                    });
+                                                }
+                                            }
+                                            Some(bag) => {
+                                                let positions_and_counts = bag
+                                                    .counts
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(mut choice, count)| {
+                                                        let mut position = vec![];
+                                                        for _ in 0..number_of_cops {
+                                                            position.push(
+                                                                choice
+                                                                    % game.graph.vertices.len(),
+                                                            );
+                                                            choice /= game.graph.vertices.len();
+                                                        }
+                                                        (position, count)
+                                                    });
+                                                if *sort_by_counts {
+                                                    let mut positions_and_counts =
+                                                        positions_and_counts
+                                                            .collect::<Vec<_>>();
+                                                    positions_and_counts
+                                                        .sort_by_key(|(_, count)| **count);
+                                                    for (position, count) in
+                                                        positions_and_counts.iter().rev()
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(position),
+                                                                None,
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                } else {
+                                                    for (position, count) in
+                                                        positions_and_counts
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(&position),
+                                                                None,
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        GameStatisticsView::Robber => {
+                            match &mut game.robber {
+                                Robber::Random(_) => {
+                                    ui.label(RichText::new("Random robber").strong());
+                                }
+                                Robber::Menace(robber) => {
+                                    ui.label(RichText::new("Menace robber").strong());
+
+                                    ui.add_space(10.0);
+
+                                    let MenaceRobberViewingState {
+                                        bag_key,
+                                        editing_vertex,
+                                        sort_by_counts,
+                                    } = menace_robber_viewing_state.as_mut().unwrap();
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Bag:").strong());
+
+                                        // start_bag is a temporary bool we can change,
+                                        // we use it to change whether we're currently viewing
+                                        // a start bag or a non start bag.
+                                        let mut start_bag = bag_key.1.is_none();
+                                        let selected_text =
+                                            if start_bag { "Start" } else { "Non start" };
+                                        egui::ComboBox::from_id_source("Robber bag type")
+                                            .selected_text(selected_text)
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut start_bag, true, "Start");
+                                                ui.selectable_value(
+                                                    &mut start_bag,
+                                                    false,
+                                                    "Non start",
+                                                );
+                                            });
+                                        // if start_bag changes, we update menace_cop_viewing_bag
+                                        if start_bag {
+                                            if bag_key.1.is_some() {
+                                                *bag_key = (vec![0; number_of_cops as usize], None);
+                                                *editing_vertex = MenaceEditingVertex::None;
+                                            }
+                                        } else if bag_key.1.is_none() {
+                                            *bag_key = (vec![0; number_of_cops as usize], Some(0));
+                                            *editing_vertex = MenaceEditingVertex::None;
+                                        }
+                                    });
+
+                                    // We allow the user to select the bag.
+                                    let cops = &mut bag_key.0;
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(
+                                            editing_vertex,
+                                            MenaceEditingVertex::None,
+                                            "View",
+                                        );
+                                        for i in 0..cops.len() {
+                                            ui.selectable_value(
+                                                editing_vertex,
+                                                MenaceEditingVertex::Cop(i),
+                                                format!("Edit cop {i}"),
+                                            );
+                                        }
+                                        if bag_key.1.is_some() {
+                                            ui.selectable_value(
+                                                editing_vertex,
+                                                MenaceEditingVertex::Robber,
+                                                "Edit robber",
+                                            );
+                                        }
+                                    });
+                                    match editing_vertex {
+                                        MenaceEditingVertex::None => {
+                                            show_graph_with_cops_and_robber(
+                                                ui,
+                                                Some(cops),
+                                                bag_key.1,
+                                                &game.graph,
+                                                300.0,
+                                            );
+                                        }
+                                        MenaceEditingVertex::Cop(i) => {
+                                            select_graph_vertex(
+                                                ui,
+                                                &mut cops[*i],
+                                                &game.graph,
+                                                true,
+                                            );
+                                        }
+                                        MenaceEditingVertex::Robber => {
+                                            if let Some(robber) = &mut bag_key.1 {
+                                                select_graph_vertex(
+                                                    ui,
+                                                    robber,
+                                                    &game.graph,
+                                                    false,
+                                                );
+                                            } else {
+                                                // Shouldn't be editing robber, so we change editing vertex.
+                                                *editing_vertex = MenaceEditingVertex::None;
+                                            }
+                                        }
+                                    }
+
+                                    ui.add_space(10.0);
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Moves:").strong());
+                                        ui.toggle_value(sort_by_counts, "Sort moves");
+                                    });
+
+                                    let bag = robber.bags.get(bag_key);
+                                    let cops = &bag_key.0;
+                                    if let Some(robber) = bag_key.1 {
+                                        // Non start position
+                                        match bag {
+                                            None => {
+                                                let neighbours = &game.graph.adjacency_list[robber];
+                                                for &neighbour in neighbours {
+                                                    ui.horizontal(|ui| {
+                                                        show_graph_with_cops_and_robber(
+                                                            ui,
+                                                            Some(cops),
+                                                            Some(neighbour),
+                                                            &game.graph,
+                                                            180.0,
+                                                        );
+                                                        ui.label("50");
+                                                    });
+                                                }
+                                                ui.horizontal(|ui| {
+                                                    show_graph_with_cops_and_robber(
+                                                        ui,
+                                                        Some(cops),
+                                                        Some(robber),
+                                                        &game.graph,
+                                                        180.0,
+                                                    );
+                                                    ui.label("50");
+                                                });
+                                            }
+                                            Some(bag) => {
+                                                let positions_and_counts = bag
+                                                    .counts
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(choice, count)| {
+                                                        let neighbours = &game.graph.adjacency_list[robber];
+                                                        let position = if choice == neighbours.len() {
+                                                            robber
+                                                        } else {
+                                                            neighbours[choice]
+                                                        };
+                                                        (position, count)
+                                                    });
+                                                if *sort_by_counts {
+                                                    let mut positions_and_counts =
+                                                        positions_and_counts
+                                                            .collect::<Vec<_>>();
+                                                    positions_and_counts
+                                                        .sort_by_key(|(_, count)| **count);
+                                                    for &(position, count) in
+                                                        positions_and_counts.iter().rev()
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(cops),
+                                                                Some(position),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                } else {
+                                                    for (position, count) in
+                                                        positions_and_counts
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(cops),
+                                                                Some(position),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        match bag {
+                                            None => {
+                                                for position in 0..game.graph.vertices.len() {
+                                                    ui.horizontal(|ui| {
+                                                        show_graph_with_cops_and_robber(
+                                                            ui,
+                                                            Some(cops),
+                                                            Some(position),
+                                                            &game.graph,
+                                                            180.0,
+                                                        );
+                                                        ui.label("50");
+                                                    });
+                                                }
+                                            }
+                                            Some(bag) => {
+                                                let positions_and_counts = bag
+                                                    .counts
+                                                    .iter()
+                                                    .enumerate();
+                                                if *sort_by_counts {
+                                                    let mut positions_and_counts =
+                                                        positions_and_counts
+                                                            .collect::<Vec<_>>();
+                                                    positions_and_counts
+                                                        .sort_by_key(|(_, count)| **count);
+                                                    for (position, count) in
+                                                        positions_and_counts.iter().rev()
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(cops),
+                                                                Some(*position),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                } else {
+                                                    for (position, count) in
+                                                        positions_and_counts
+                                                    {
+                                                        ui.horizontal(|ui| {
+                                                            show_graph_with_cops_and_robber(
+                                                                ui,
+                                                                Some(cops),
+                                                                Some(position),
+                                                                &game.graph,
+                                                                180.0,
+                                                            );
+                                                            ui.label(count.to_string());
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        GameStatisticsView::Graph => {
+                            let half_line_points: PlotPoints = [[0.0, 0.5], [1.0, 0.5]].into_iter().collect();
+                            let half_line = Line::new(half_line_points).color(Color32::BLACK);
+
+                            let number_of_scores = cop_scores.len().pow(2) as f64;
+                            let score_points = cop_scores.iter().enumerate().map(|(i, &score)| {
+                                let number_of_matches = (i + 1).pow(2) as f64;
+                                let cop_win_fraction = (score as f64) / number_of_matches;
+                                [number_of_matches / number_of_scores, cop_win_fraction]
+                            });
+                            let score_points: PlotPoints = [[0.0_f64, 0.5]].into_iter().chain(score_points).collect();
+                            let score_line = Line::new(score_points);
+
+                            Plot::new("Cop wins")
+                                        .view_aspect(1.0)
+                                        .allow_drag(false)
+                                        .allow_scroll(false)
+                                        .allow_zoom(false)
+                                        .allow_boxed_zoom(false)
+                                        .width(330.0)
+                                        .show(ui, |plot_ui|{
+                                            plot_ui.set_plot_bounds(PlotBounds::from_min_max([0.0, 0.0], [1.0, 1.0]));
+                                            plot_ui.line(score_line);
+                                            plot_ui.line(half_line)
+                                        });
+                            ui.label("The fraction of cop wins (evaluated after every perfect square number of matches).");
+                        }
+                    }
+                }
+            });
+        });
+}
+
+fn game(
+    ctx: &egui::Context,
+    game_handle: &mut GameHandle,
+    graphs: &Vec<Graph>,
+    current_graph: usize,
+    number_of_cops: u8,
+) -> Option<View> {
+    let mut view = None;
+
+    let GameHandle {
+        game_view_state: game_and_animation_state,
+        number_of_immediate_games,
+        ..
+    } = game_handle;
+
+    game_details(
+        ctx,
+        game_and_animation_state,
+        number_of_immediate_games,
+        number_of_cops,
+    );
+
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.heading("Cops and Robbers");
+
+        ui.horizontal(|ui| {
+            if ui.button("Create new game").clicked() {
+                view = Some(View::GameSettingsSelection);
+                return;
+            }
+
+            if ui.button("Play 1000 games").clicked() {
+                let mut number_of_immediate_games = number_of_immediate_games.lock();
+                *number_of_immediate_games = match *number_of_immediate_games {
+                    Some(games) => Some(games + 1000),
+                    None => Some(1000),
+                };
+            }
+        });
+
+        let number_of_immediate_games = number_of_immediate_games.lock();
+        if number_of_immediate_games.is_some() {
+            ui.spinner();
+            show_graph(ui, &graphs[current_graph]);
+        } else {
+            let mut game_and_animation_state = game_and_animation_state.lock();
+            if let Some(game_and_animation_state) = &mut (*game_and_animation_state) {
+                show_game(ui, &graphs[current_graph], game_and_animation_state);
+            }
+        }
+    });
+
+    view
+}
+
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -770,835 +1627,26 @@ impl eframe::App for TemplateApp {
             view,
         } = self;
 
-        match view {
-            View::GameSettingsSelection => {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.heading("Cops and Robbers");
-
-                    ui.horizontal(|ui| {
-                        ui.label("Graph");
-                        egui::ComboBox::from_id_source("Graph")
-                            .selected_text(graphs[*current_graph].name.clone())
-                            .show_ui(ui, |ui| {
-                                for (i, graph) in graphs.iter().enumerate() {
-                                    ui.selectable_value(current_graph, i, graph.name.clone());
-                                }
-                            });
-                        if ui.button("New graph").clicked() {
-                            *view = View::GraphCreation(GraphCreationState::default());
-                        }
-                    });
-                    show_graph(ui, &graphs[*current_graph]);
-
-                    ui.horizontal(|ui| {
-                        ui.label("Number of cops");
-                        egui::ComboBox::from_id_source("Number of cops")
-                            .selected_text(format!("{number_of_cops}"))
-                            .show_ui(ui, |ui| {
-                                for i in 1..=3 {
-                                    ui.selectable_value(number_of_cops, i, i.to_string());
-                                }
-                            });
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Number of steps");
-                        ui.add(egui::DragValue::new(number_of_steps).clamp_range(0..=100));
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Cop algorithm");
-                        egui::ComboBox::from_id_source("Cop algorithm")
-                            .selected_text(format!("{cop:?}"))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(cop, Algorithm::Random, "Random");
-                                ui.selectable_value(cop, Algorithm::Menace, "Menace");
-                            });
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Robber algorithm");
-                        egui::ComboBox::from_id_source("Robber algorithm")
-                            .selected_text(format!("{robber:?}"))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(robber, Algorithm::Random, "Random");
-                                ui.selectable_value(robber, Algorithm::Menace, "Menace");
-                            });
-                    });
-
-                    if ui.button("Play").clicked() {
-                        *view = View::Game(GameHandle::new(
-                            &graphs[*current_graph],
-                            *number_of_cops,
-                            *number_of_steps,
-                            *cop,
-                            *robber,
-                            ctx.clone(),
-                        ));
-                    }
-                });
-            }
+        let new_view = match view {
+            View::GameSettingsSelection => game_settings_selection(
+                ctx,
+                graphs,
+                current_graph,
+                number_of_cops,
+                number_of_steps,
+                cop,
+                robber,
+            ),
             View::GraphCreation(graph_creation_state) => {
-                let mut new_view = None;
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.heading("Cops and Robbers");
-
-                    ui.add_space(5.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label("Graph name");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut graph_creation_state.graph.name)
-                                .desired_width(100.0),
-                        );
-                    });
-
-                    ui.add_space(5.0);
-
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(
-                            &mut graph_creation_state.mode,
-                            Mode::Vertex,
-                            "Vertex mode",
-                        );
-                        ui.selectable_value(
-                            &mut graph_creation_state.mode,
-                            Mode::Edge,
-                            "Edge mode",
-                        );
-                        if ui.button("Delete").clicked() {
-                            match graph_creation_state.selected_item {
-                                SelectedItem::Vertex(i) => {
-                                    graph_creation_state.graph.vertices.remove(i);
-                                    graph_creation_state.graph.adjacency_list.remove(i);
-
-                                    // We will go through the adjaceny list.
-                                    // We will remove all occurences of i and relabel any vertex v greater than i as v - 1.
-                                    graph_creation_state
-                                        .graph
-                                        .adjacency_list
-                                        .iter_mut()
-                                        .for_each(|list| {
-                                            let mut removed_vertex_position = None;
-                                            for (index, v) in list.iter_mut().enumerate() {
-                                                match (*v).cmp(&i) {
-                                                    Ordering::Greater => *v -= 1,
-                                                    Ordering::Equal => {
-                                                        removed_vertex_position = Some(index)
-                                                    }
-                                                    Ordering::Less => {}
-                                                }
-                                            }
-                                            if let Some(index) = removed_vertex_position {
-                                                list.remove(index);
-                                            }
-                                        });
-                                    graph_creation_state.selected_item = SelectedItem::None;
-                                }
-                                SelectedItem::Edge(i, j) => {
-                                    let adjaceny_list_i =
-                                        &mut graph_creation_state.graph.adjacency_list[i];
-                                    for k in 0..adjaceny_list_i.len() {
-                                        if adjaceny_list_i[k] == j {
-                                            adjaceny_list_i.remove(k);
-                                            break;
-                                        }
-                                    }
-
-                                    let adjaceny_list_j =
-                                        &mut graph_creation_state.graph.adjacency_list[j];
-                                    for k in 0..adjaceny_list_j.len() {
-                                        if adjaceny_list_j[k] == i {
-                                            adjaceny_list_j.remove(k);
-                                            break;
-                                        }
-                                    }
-
-                                    graph_creation_state.selected_item = SelectedItem::None;
-                                }
-                                _ => {}
-                            }
-                        }
-                    });
-
-                    Frame::canvas(ui.style()).show(ui, |ui| {
-                        show_graph_editor(ui, graph_creation_state);
-                    });
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Create").clicked() {
-                            if graph_creation_state.graph.name.is_empty()
-                                || graph_creation_state.graph.vertices.is_empty()
-                            {
-                                return;
-                            }
-                            graphs.push(graph_creation_state.graph.clone());
-                            *current_graph = graphs.len() - 1;
-                            new_view = Some(View::GameSettingsSelection);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            new_view = Some(View::GameSettingsSelection);
-                        }
-                    });
-                });
-                if let Some(new_view) = new_view {
-                    *view = new_view;
-                }
+                graph_creation(ctx, graph_creation_state, graphs, current_graph)
             }
-            View::Game(GameHandle {
-                game_view_state: game_and_animation_state,
-                number_of_immediate_games,
-                ..
-            }) => {
-                let mut new_view = None;
-
-                egui::SidePanel::right("Details")
-                    .exact_width(350.0)
-                    .resizable(false)
-                    .show(ctx, |ui| {
-                        egui::ScrollArea::both().auto_shrink([false, true]).show(ui, |ui| {
-                            let number_of_immediate_games = number_of_immediate_games.lock();
-
-                            // Check if their are games to be computed
-                            // - if so, we shouldn't get the game_and_animation_state lock right now,
-                            // as the computation thread may be locking it.
-                            if number_of_immediate_games.is_some() {
-                                ui.spinner();
-                                return;
-                            }
-
-                            let mut game_and_animation_state = game_and_animation_state.lock();
-                            if let Some(game_and_animation_state) = &mut (*game_and_animation_state)
-                            {
-                                let GameViewState {
-                                    game,
-                                    game_statistics_view,
-                                    menace_cop_viewing_state,
-                                    menace_robber_viewing_state,
-                                    cop_scores,
-                                    ..
-                                } = game_and_animation_state;
-
-                                ui.horizontal(|ui| {
-                                    ui.selectable_value(game_statistics_view, GameStatisticsView::Cop, "Cop");
-                                    ui.selectable_value(game_statistics_view, GameStatisticsView::Robber, "Robber");
-                                    ui.selectable_value(game_statistics_view, GameStatisticsView::Graph, "Graph");
-                                });
-
-                                match game_statistics_view {
-                                    GameStatisticsView::Cop => {
-                                        match &mut game.cop {
-                                            Cop::Random(_) => {
-                                                ui.label(RichText::new("Random cop").strong());
-                                            }
-                                            Cop::Menace(cop) => {
-                                                let MenaceCopViewingState {
-                                                    bag_key,
-                                                    editing_vertex,
-                                                    sort_by_counts,
-                                                } = menace_cop_viewing_state.as_mut().unwrap();
-
-                                                ui.label(RichText::new("Menace cop").strong());
-
-                                                ui.add_space(10.0);
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Bag:").strong());
-
-                                                    // start_bag is a temporary bool we can change,
-                                                    // we use it to change whether we're currently viewing
-                                                    // the start bag or a non start bag.
-                                                    let mut start_bag = bag_key.is_none();
-                                                    let selected_text =
-                                                        if start_bag { "Start" } else { "Non start" };
-                                                    egui::ComboBox::from_id_source("Cop bag type")
-                                                        .selected_text(selected_text)
-                                                        .show_ui(ui, |ui| {
-                                                            ui.selectable_value(&mut start_bag, true, "Start");
-                                                            ui.selectable_value(
-                                                                &mut start_bag,
-                                                                false,
-                                                                "Non start",
-                                                            );
-                                                        });
-                                                    // if start_bag changes, we update menace_cop_viewing_bag
-                                                    if start_bag {
-                                                        if bag_key.is_some() {
-                                                            *bag_key = None;
-                                                        }
-                                                    } else if bag_key.is_none() {
-                                                        *bag_key = Some((vec![0; *number_of_cops as usize], 0));
-                                                    }
-                                                });
-
-                                                // If we are viewing a non-start bag, we allow the user to select the bag.
-                                                if let Some((cops, robber)) = bag_key {
-                                                    ui.horizontal(|ui| {
-                                                        ui.selectable_value(
-                                                            editing_vertex,
-                                                            MenaceEditingVertex::None,
-                                                            "View",
-                                                        );
-                                                        for i in 0..cops.len() {
-                                                            ui.selectable_value(
-                                                                editing_vertex,
-                                                                MenaceEditingVertex::Cop(i),
-                                                                format!("Edit cop {i}"),
-                                                            );
-                                                        }
-                                                        ui.selectable_value(
-                                                            editing_vertex,
-                                                            MenaceEditingVertex::Robber,
-                                                            "Edit robber",
-                                                        );
-                                                    });
-
-                                                    match editing_vertex {
-                                                        MenaceEditingVertex::None => {
-                                                            show_graph_with_cops_and_robber(
-                                                                ui,
-                                                                Some(cops),
-                                                                Some(*robber),
-                                                                &game.graph,
-                                                                300.0,
-                                                            );
-                                                        }
-                                                        MenaceEditingVertex::Cop(i) => {
-                                                            select_graph_vertex(
-                                                                ui,
-                                                                &mut cops[*i],
-                                                                &game.graph,
-                                                                true,
-                                                            );
-                                                        }
-                                                        MenaceEditingVertex::Robber => {
-                                                            select_graph_vertex(
-                                                                ui,
-                                                                robber,
-                                                                &game.graph,
-                                                                false,
-                                                            );
-                                                        }
-                                                    }
-                                                }
-
-                                                ui.add_space(10.0);
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Moves:").strong());
-                                                    ui.toggle_value(sort_by_counts, "Sort moves");
-                                                });
-
-                                                let bag = cop.bags.get(bag_key);
-                                                if let Some((cops, robber)) = bag_key {
-                                                    // Non start position
-                                                    match bag {
-                                                        None => {
-                                                            let mut choices = 1;
-                                                            for cop in cops.iter() {
-                                                                choices *= game.graph.adjacency_list[*cop]
-                                                                    .len()
-                                                                    + 1;
-                                                            }
-                                                            for mut choice in 0..choices {
-                                                                let mut position = vec![];
-                                                                for &cop in cops.iter() {
-                                                                    let neighbours =
-                                                                        &game.graph.adjacency_list[cop];
-                                                                    let new_cop_position =
-                                                                        choice % (neighbours.len() + 1);
-                                                                    if new_cop_position == neighbours.len()
-                                                                    {
-                                                                        position.push(cop);
-                                                                    } else {
-                                                                        position.push(
-                                                                            neighbours[new_cop_position],
-                                                                        );
-                                                                    }
-                                                                    choice /= neighbours.len() + 1;
-                                                                }
-                                                                ui.horizontal(|ui| {
-                                                                    show_graph_with_cops_and_robber(
-                                                                        ui,
-                                                                        Some(&position),
-                                                                        Some(*robber),
-                                                                        &game.graph,
-                                                                        180.0,
-                                                                    );
-                                                                    ui.label("50");
-                                                                });
-                                                            }
-                                                        }
-                                                        Some(bag) => {
-                                                            let positions_and_counts = bag
-                                                                .counts
-                                                                .iter()
-                                                                .enumerate()
-                                                                .map(|(mut choice, count)| {
-                                                                    let mut position = vec![];
-                                                                    for &cop in cops.iter() {
-                                                                        let neighbours =
-                                                                            &game.graph.adjacency_list[cop];
-                                                                        let new_cop_position =
-                                                                            choice % (neighbours.len() + 1);
-                                                                        if new_cop_position
-                                                                            == neighbours.len()
-                                                                        {
-                                                                            position.push(cop);
-                                                                        } else {
-                                                                            position.push(
-                                                                                neighbours
-                                                                                    [new_cop_position],
-                                                                            );
-                                                                        }
-                                                                        choice /= neighbours.len() + 1;
-                                                                    }
-                                                                    (position, count)
-                                                                });
-                                                            if *sort_by_counts {
-                                                                let mut positions_and_counts =
-                                                                    positions_and_counts
-                                                                        .collect::<Vec<_>>();
-                                                                positions_and_counts
-                                                                    .sort_by_key(|(_, count)| **count);
-                                                                for (position, count) in
-                                                                    positions_and_counts.iter().rev()
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(position),
-                                                                            Some(*robber),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            } else {
-                                                                for (position, count) in
-                                                                    positions_and_counts
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(&position),
-                                                                            Some(*robber),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    match bag {
-                                                        None => {
-                                                            let choices = game
-                                                                .graph
-                                                                .vertices
-                                                                .len()
-                                                                .pow(*number_of_cops as u32);
-                                                            for mut choice in 0..choices {
-                                                                let mut position = vec![];
-                                                                for _ in 0..*number_of_cops {
-                                                                    position.push(
-                                                                        choice % game.graph.vertices.len(),
-                                                                    );
-                                                                    choice /= game.graph.vertices.len();
-                                                                }
-                                                                ui.horizontal(|ui| {
-                                                                    show_graph_with_cops_and_robber(
-                                                                        ui,
-                                                                        Some(&position),
-                                                                        None,
-                                                                        &game.graph,
-                                                                        180.0,
-                                                                    );
-                                                                    ui.label("50");
-                                                                });
-                                                            }
-                                                        }
-                                                        Some(bag) => {
-                                                            let positions_and_counts = bag
-                                                                .counts
-                                                                .iter()
-                                                                .enumerate()
-                                                                .map(|(mut choice, count)| {
-                                                                    let mut position = vec![];
-                                                                    for _ in 0..*number_of_cops {
-                                                                        position.push(
-                                                                            choice
-                                                                                % game.graph.vertices.len(),
-                                                                        );
-                                                                        choice /= game.graph.vertices.len();
-                                                                    }
-                                                                    (position, count)
-                                                                });
-                                                            if *sort_by_counts {
-                                                                let mut positions_and_counts =
-                                                                    positions_and_counts
-                                                                        .collect::<Vec<_>>();
-                                                                positions_and_counts
-                                                                    .sort_by_key(|(_, count)| **count);
-                                                                for (position, count) in
-                                                                    positions_and_counts.iter().rev()
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(position),
-                                                                            None,
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            } else {
-                                                                for (position, count) in
-                                                                    positions_and_counts
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(&position),
-                                                                            None,
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    GameStatisticsView::Robber => {
-                                        match &mut game.robber {
-                                            Robber::Random(_) => {
-                                                ui.label(RichText::new("Random robber").strong());
-                                            }
-                                            Robber::Menace(robber) => {
-                                                ui.label(RichText::new("Menace robber").strong());
-
-                                                ui.add_space(10.0);
-
-                                                let MenaceRobberViewingState {
-                                                    bag_key,
-                                                    editing_vertex,
-                                                    sort_by_counts,
-                                                } = menace_robber_viewing_state.as_mut().unwrap();
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Bag:").strong());
-
-                                                    // start_bag is a temporary bool we can change,
-                                                    // we use it to change whether we're currently viewing
-                                                    // a start bag or a non start bag.
-                                                    let mut start_bag = bag_key.1.is_none();
-                                                    let selected_text =
-                                                        if start_bag { "Start" } else { "Non start" };
-                                                    egui::ComboBox::from_id_source("Robber bag type")
-                                                        .selected_text(selected_text)
-                                                        .show_ui(ui, |ui| {
-                                                            ui.selectable_value(&mut start_bag, true, "Start");
-                                                            ui.selectable_value(
-                                                                &mut start_bag,
-                                                                false,
-                                                                "Non start",
-                                                            );
-                                                        });
-                                                    // if start_bag changes, we update menace_cop_viewing_bag
-                                                    if start_bag {
-                                                        if bag_key.1.is_some() {
-                                                            *bag_key = (vec![0; *number_of_cops as usize], None);
-                                                            *editing_vertex = MenaceEditingVertex::None;
-                                                        }
-                                                    } else if bag_key.1.is_none() {
-                                                        *bag_key = (vec![0; *number_of_cops as usize], Some(0));
-                                                        *editing_vertex = MenaceEditingVertex::None;
-                                                    }
-                                                });
-
-                                                // We allow the user to select the bag.
-                                                let cops = &mut bag_key.0;
-                                                ui.horizontal(|ui| {
-                                                    ui.selectable_value(
-                                                        editing_vertex,
-                                                        MenaceEditingVertex::None,
-                                                        "View",
-                                                    );
-                                                    for i in 0..cops.len() {
-                                                        ui.selectable_value(
-                                                            editing_vertex,
-                                                            MenaceEditingVertex::Cop(i),
-                                                            format!("Edit cop {i}"),
-                                                        );
-                                                    }
-                                                    if bag_key.1.is_some() {
-                                                        ui.selectable_value(
-                                                            editing_vertex,
-                                                            MenaceEditingVertex::Robber,
-                                                            "Edit robber",
-                                                        );
-                                                    }
-                                                });
-                                                match editing_vertex {
-                                                    MenaceEditingVertex::None => {
-                                                        show_graph_with_cops_and_robber(
-                                                            ui,
-                                                            Some(cops),
-                                                            bag_key.1,
-                                                            &game.graph,
-                                                            300.0,
-                                                        );
-                                                    }
-                                                    MenaceEditingVertex::Cop(i) => {
-                                                        select_graph_vertex(
-                                                            ui,
-                                                            &mut cops[*i],
-                                                            &game.graph,
-                                                            true,
-                                                        );
-                                                    }
-                                                    MenaceEditingVertex::Robber => {
-                                                        if let Some(robber) = &mut bag_key.1 {
-                                                            select_graph_vertex(
-                                                                ui,
-                                                                robber,
-                                                                &game.graph,
-                                                                false,
-                                                            );
-                                                        } else {
-                                                            // Shouldn't be editing robber, so we change editing vertex.
-                                                            *editing_vertex = MenaceEditingVertex::None;
-                                                        }
-                                                    }
-                                                }
-
-                                                ui.add_space(10.0);
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Moves:").strong());
-                                                    ui.toggle_value(sort_by_counts, "Sort moves");
-                                                });
-
-                                                let bag = robber.bags.get(bag_key);
-                                                let cops = &bag_key.0;
-                                                if let Some(robber) = bag_key.1 {
-                                                    // Non start position
-                                                    match bag {
-                                                        None => {
-                                                            let neighbours = &game.graph.adjacency_list[robber];
-                                                            for &neighbour in neighbours {
-                                                                ui.horizontal(|ui| {
-                                                                    show_graph_with_cops_and_robber(
-                                                                        ui,
-                                                                        Some(cops),
-                                                                        Some(neighbour),
-                                                                        &game.graph,
-                                                                        180.0,
-                                                                    );
-                                                                    ui.label("50");
-                                                                });
-                                                            }
-                                                            ui.horizontal(|ui| {
-                                                                show_graph_with_cops_and_robber(
-                                                                    ui,
-                                                                    Some(cops),
-                                                                    Some(robber),
-                                                                    &game.graph,
-                                                                    180.0,
-                                                                );
-                                                                ui.label("50");
-                                                            });
-                                                        }
-                                                        Some(bag) => {
-                                                            let positions_and_counts = bag
-                                                                .counts
-                                                                .iter()
-                                                                .enumerate()
-                                                                .map(|(choice, count)| {
-                                                                    let neighbours = &game.graph.adjacency_list[robber];
-                                                                    let position = if choice == neighbours.len() {
-                                                                        robber
-                                                                    } else {
-                                                                        neighbours[choice]
-                                                                    };
-                                                                    (position, count)
-                                                                });
-                                                            if *sort_by_counts {
-                                                                let mut positions_and_counts =
-                                                                    positions_and_counts
-                                                                        .collect::<Vec<_>>();
-                                                                positions_and_counts
-                                                                    .sort_by_key(|(_, count)| **count);
-                                                                for &(position, count) in
-                                                                    positions_and_counts.iter().rev()
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(cops),
-                                                                            Some(position),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            } else {
-                                                                for (position, count) in
-                                                                    positions_and_counts
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(cops),
-                                                                            Some(position),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    match bag {
-                                                        None => {
-                                                            for position in 0..game.graph.vertices.len() {
-                                                                ui.horizontal(|ui| {
-                                                                    show_graph_with_cops_and_robber(
-                                                                        ui,
-                                                                        Some(cops),
-                                                                        Some(position),
-                                                                        &game.graph,
-                                                                        180.0,
-                                                                    );
-                                                                    ui.label("50");
-                                                                });
-                                                            }
-                                                        }
-                                                        Some(bag) => {
-                                                            let positions_and_counts = bag
-                                                                .counts
-                                                                .iter()
-                                                                .enumerate();
-                                                            if *sort_by_counts {
-                                                                let mut positions_and_counts =
-                                                                    positions_and_counts
-                                                                        .collect::<Vec<_>>();
-                                                                positions_and_counts
-                                                                    .sort_by_key(|(_, count)| **count);
-                                                                for (position, count) in
-                                                                    positions_and_counts.iter().rev()
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(cops),
-                                                                            Some(*position),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            } else {
-                                                                for (position, count) in
-                                                                    positions_and_counts
-                                                                {
-                                                                    ui.horizontal(|ui| {
-                                                                        show_graph_with_cops_and_robber(
-                                                                            ui,
-                                                                            Some(cops),
-                                                                            Some(position),
-                                                                            &game.graph,
-                                                                            180.0,
-                                                                        );
-                                                                        ui.label(count.to_string());
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    GameStatisticsView::Graph => {
-                                        let half_line_points: PlotPoints = [[0.0, 0.5], [1.0, 0.5]].into_iter().collect();
-                                        let half_line = Line::new(half_line_points).color(Color32::BLACK);
-
-                                        let number_of_scores = cop_scores.len().pow(2) as f64;
-                                        let score_points = cop_scores.iter().enumerate().map(|(i, &score)| {
-                                            let number_of_matches = (i + 1).pow(2) as f64;
-                                            let cop_win_fraction = (score as f64) / number_of_matches;
-                                            [number_of_matches / number_of_scores, cop_win_fraction]
-                                        });
-                                        let score_points: PlotPoints = [[0.0_f64, 0.5]].into_iter().chain(score_points).collect();
-                                        let score_line = Line::new(score_points);
-
-                                        Plot::new("Cop wins")
-                                                    .view_aspect(1.0)
-                                                    .allow_drag(false)
-                                                    .allow_scroll(false)
-                                                    .allow_zoom(false)
-                                                    .allow_boxed_zoom(false)
-                                                    .width(330.0)
-                                                    .show(ui, |plot_ui|{
-                                                        plot_ui.set_plot_bounds(PlotBounds::from_min_max([0.0, 0.0], [1.0, 1.0]));
-                                                        plot_ui.line(score_line);
-                                                        plot_ui.line(half_line)
-                                                    });
-                                        ui.label("The fraction of cop wins (evaluated after every perfect square number of matches).");
-                                    }
-                                }
-                            }
-                        });
-                    });
-
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.heading("Cops and Robbers");
-
-                    ui.horizontal(|ui| {
-                        if ui.button("Create new game").clicked() {
-                            new_view = Some(View::GameSettingsSelection);
-                            return;
-                        }
-
-                        if ui.button("Play 1000 games").clicked() {
-                            let mut number_of_immediate_games = number_of_immediate_games.lock();
-                            *number_of_immediate_games = match *number_of_immediate_games {
-                                Some(games) => Some(games + 1000),
-                                None => Some(1000),
-                            };
-                        }
-                    });
-
-                    let number_of_immediate_games = number_of_immediate_games.lock();
-                    if number_of_immediate_games.is_some() {
-                        ui.spinner();
-                        show_graph(ui, &graphs[*current_graph]);
-                    } else {
-                        let mut game_and_animation_state = game_and_animation_state.lock();
-                        if let Some(game_and_animation_state) = &mut (*game_and_animation_state) {
-                            show_game(ui, &graphs[*current_graph], game_and_animation_state);
-                        }
-                    }
-                });
-                if let Some(new_view) = new_view {
-                    *view = new_view;
-                }
+            View::Game(game_handle) => {
+                game(ctx, game_handle, graphs, *current_graph, *number_of_cops)
             }
+        };
+
+        if let Some(new_view) = new_view {
+            *view = new_view;
         }
     }
 }
